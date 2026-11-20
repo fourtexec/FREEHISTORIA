@@ -1,3 +1,6 @@
+import {buildPayload} from '../shared/provider.js';
+import {orderPrompt,parseOrder} from '../shared/orders.js';
+import {providerRelay} from './relay.js';
 import { gameWorld } from '../shared/world.js';
 import { actions, nationName } from '../shared/game.js';
 
@@ -22,4 +25,10 @@ export async function interpretOrder(game, order, catalog) {
     if (!Object.hasOwn(actions,data.action) || typeof data.narrative!=='string' || !data.narrative.trim()) throw Error();
     return {action:data.action, target:data.target, narrative:data.narrative.trim().slice(0,800)};
   } catch { throw Object.assign(Error('Модель Ollama не ответила корректно. Ход можно повторить.'),{status:503}); }
+}
+
+export async function providerOrder(cfg,game,order,catalog){
+  const payload=buildPayload(cfg,orderPrompt(game,order,catalog));
+  const answer=parseOrder(await providerRelay(payload),payload.path);
+  return {...answer,narrative:'Приказ исполнен.'};
 }

@@ -1,10 +1,12 @@
+import {serveSite} from './site.js';
 import { biography } from '../shared/person.js';
 import { providerRelay } from './relay.js';
 import { historyService } from './history.js';
 import { roomService } from './rooms.js';
 import http from 'node:http';
-import { interpretOrder } from './advisor.js';
-import { createHash } from 'node:crypto';
+import {isIP} from 'node:net';
+import { interpretOrder, providerOrder } from './advisor.js';
+import {accountService} from './accounts.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -20,9 +22,10 @@ db.exec(`PRAGMA journal_mode=WAL;
   );
   CREATE INDEX IF NOT EXISTS campaigns_owner ON campaigns(owner, updated);`);
 const history = historyService(db,catalog);
-const rooms = roomService(db, catalog);
+const accounts=accountService(db,folder);
+const rooms = roomService(db, catalog, accounts);
 const port = Number(process.env.API_PORT || 8787);
-const origins = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',').map(s => s.trim());
+const origins = (process.env.ALLOWED_ORIGINS ?? 'https://fourtexec.site,http://localhost:5173,http://127.0.0.1:5173').split(',').map(s => s.trim());
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const uuid = /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i;
 
@@ -51,7 +54,8 @@ const server = http.createServer(async (req, res) => {
     const origin = req.headers.origin;
     res.setHeader('Vary', 'Origin');
     if (origin) {
-      if (!origins.includes(origin)) throw fail(403, 'Адрес панели отсутствует в ALLOWED_ORIGINS.');
+      const sameSite=process.env.FREEHISTORIA_WEB==='1' && ['http://','https://'].some(scheme=>origin===scheme+req.headers.host);
+      if (!sameSite && !origins.includes(origin)) throw fail(403, 'Адрес панели отсутствует в ALLOWED_ORIGINS.');
       res.setHeader('Access-Control-Allow-Origin', origin);
     }
     if (req.method === 'OPTIONS') {
@@ -60,21 +64,40 @@ const server = http.createServer(async (req, res) => {
       return send(204);
     }
     const path = new URL(req.url, 'http://localhost').pathname;
+    if(process.env.FREEHISTORIA_WEB==='1' && !path.startsWith('/v1/'))return serveSite(req,res,path);
     if (path === '/v1/health' && req.method === 'GET') return send(200, { service: 'FreeHISTORIA', version: 1, freeOrders: Boolean(process.env.OLLAMA_MODEL) });
     if (path === '/v1/history' && req.method==='GET') return send(200, await history(new URL(req.url,'http://localhost').searchParams));
     const person = /^\/v1\/history\/person\/(Q[1-9]\d*)$/.exec(path);
     if(person && req.method==='GET') return send(200,await biography(person[1]));
+    const peer=req.socket.remoteAddress||'local';
+    const forwarded=req.headers['x-real-ip'];
+    const ip=peer===process.env.TRUSTED_PROXY && typeof forwarded==='string' && isIP(forwarded)?forwarded:peer;
+    if(path==='/v1/auth/challenge' && req.method==='GET')return send(200,accounts.challenge(ip));
+    const auth=/^\/v1\/auth\/(register|login)$/.exec(path);
+    if(auth && req.method==='POST')return send(200,await accounts.authenticate(auth[1],await jsonBody(req),ip));
     const route = /^\/v1\/campaigns(?:\/([^/]+)(\/turns)?)?$/.exec(path);
     const roomRoute = /^\/v1\/rooms(?:\/([^/]+)(?:\/(start|turns))?)?$/.exec(path);
     const relay = path==='/v1/provider' && req.method==='POST';
-    if (!route && !roomRoute && !relay) throw fail(404, 'Маршрут не найден.');
-    const token = /^Bearer ([0-9a-f]{64})$/.exec(req.headers.authorization || '');
-    if (!token) throw fail(401, 'Требуется личный ключ игрока.');
-    const owner = createHash('sha256').update(token[1]).digest('hex');
+    const me=path==='/v1/me',logout=path==='/v1/auth/logout',personalOrder=path==='/v1/me/order';
+    if (!route && !roomRoute && !relay && !me && !logout && !personalOrder) throw fail(404, 'Маршрут не найден.');
+    const token=(req.headers.authorization||'').replace(/^Bearer /,'');
+    if(!req.headers.authorization?.startsWith('Bearer '))throw fail(401,'Требуется вход или ключ игрока.');
+    const owner=accounts.owner(token);
+    if(me||logout||personalOrder){
+      if(!owner.startsWith('account:'))throw fail(401,'Войдите в аккаунт.');
+      if(me && req.method==='GET')return send(200,accounts.profile(owner));
+      if(me && req.method==='POST')return send(200,accounts.update(owner,await jsonBody(req,32768)));
+      if(logout && req.method==='POST'){accounts.logout(token);return send(200,{ok:true});}
+      if(personalOrder && req.method==='POST'){
+        const {game,order}=await jsonBody(req,65536);
+        return send(200,await providerOrder(accounts.provider(owner),game,order,catalog));
+      }
+      throw fail(405,'Метод не поддерживается.');
+    }
     if (relay) return send(200, await providerRelay(await jsonBody(req,131072)));
     if (roomRoute) {
       const result = await rooms({id:roomRoute[1],operation:roomRoute[2],method:req.method,owner,
-        body:req.method==='POST'?await jsonBody(req):{},since:new URL(req.url,'http://localhost').searchParams.get('since')});
+        body:req.method==='POST'?await jsonBody(req):{},params:new URL(req.url,'http://localhost').searchParams,since:new URL(req.url,'http://localhost').searchParams.get('since')});
       return send(200,result);
     }
     const [, id, turns] = route;
@@ -121,4 +144,4 @@ const server = http.createServer(async (req, res) => {
     send(internal ? 500 : err.status || 400, { error: internal ? 'Внутренняя ошибка сервера.' : err.message });
   }
 });
-server.listen(port, process.env.API_HOST || '127.0.0.1', () => console.log('FreeHISTORIA API listening on port ' + server.address().port));
+server.listen(port, process.env.API_HOST || (process.env.FREEHISTORIA_SERVER==='1'?'0.0.0.0':'127.0.0.1'), () => console.log('FreeHISTORIA API listening on port ' + server.address().port));

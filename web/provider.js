@@ -1,10 +1,9 @@
 import {buildPayload} from './shared/provider.js';
-import {actions} from './shared/game.js';
-import {gameWorld} from './shared/world.js';
-import {relayRequest} from './store.js';
+import {orderPrompt,parseOrder} from './shared/orders.js';
+import {relayRequest,account,saveSettings,accountOrder} from './store.js';
 
 const storage='freehistoria.provider.v1';
-export const provider=()=>JSON.parse(sessionStorage.getItem(storage)||'null');
+export const provider=()=>account?account.provider:JSON.parse(sessionStorage.getItem(storage)||'null');
 const presets={
   chat:{url:'https://api.openai.com/v1/chat/completions',label:'Chat Completions / совместимый API'},
   anthropic:{url:'https://api.anthropic.com/v1/messages',label:'Anthropic Messages'},
@@ -21,7 +20,7 @@ export function providerSettings(open,after) {
     <label>Тело запроса JSON<textarea name="template" rows="4"></textarea></label><small>{{prompt}} и {{model}} заменяются в строках JSON.</small>
     <label>Путь к тексту в ответе<input name="path"></label></div>
     <label>Соединение<select name="transport"><option value="direct">Напрямую из браузера</option><option value="relay">Через подключённый игровой сервер</option></select></label>
-    <p class="hint">Ключ хранится до закрытия вкладки. В режиме сервера ключ передаётся ему для запроса к провайдеру. Оплату определяет ваш тариф.</p>
+    <p class="hint">${account?'Настройки синхронизируются с аккаунтом. Ключ шифруется на сервере. Для замены настроек введите ключ снова.':'Ключ хранится в этой вкладке. Войдите в аккаунт, чтобы сохранять настройки между устройствами.'}</p>
     <p class="error" role="alert"></p><button class="primary">Сохранить провайдера</button><button type="button" id="forget-key" class="text-action">Удалить ключ</button></form>`);
   const form=document.querySelector('#provider-form'),f=form.elements;
   for(const [key,preset] of Object.entries(presets))f.type.add(new Option(preset.label,key));
@@ -31,19 +30,25 @@ export function providerSettings(open,after) {
   const sync=()=>{custom.hidden=f.type.value!=='custom';};
   f.url.addEventListener('input',()=>{if(cfg.url && f.url.value!==cfg.url && f.key.value===cfg.key)f.key.value='';});
   sync();f.type.onchange=()=>{f.url.value=presets[f.type.value].url;f.key.value='';sync();};
-  document.querySelector('#forget-key').onclick=()=>{sessionStorage.removeItem(storage);after();};
-  form.onsubmit=e=>{
+  if(account){f.transport.value='relay';f.transport.disabled=true;}
+  document.querySelector('#forget-key').onclick=async()=>{
+    try{if(account)await saveSettings({provider:null});else sessionStorage.removeItem(storage);after();}
+    catch(err){form.querySelector('.error').textContent=err.message;}
+  };
+  form.onsubmit=async e=>{
     e.preventDefault();
-    try{const input=Object.fromEntries(new FormData(form));buildPayload(input,'Проверка формата');sessionStorage.setItem(storage,JSON.stringify(input));after();}
-    catch{form.querySelector('.error').textContent='Проверьте адрес, JSON и заголовок ключа.';}
+    try{
+      const input=Object.fromEntries(new FormData(form));buildPayload(input,'Проверка формата');
+      if(account)await saveSettings({provider:input});else sessionStorage.setItem(storage,JSON.stringify(input));
+      after();
+    }catch(err){form.querySelector('.error').textContent=err.message;}
   };
 }
 export async function resolvePersonalOrder(game,order,catalog) {
   const cfg=provider();
   if(order.action!=='order' || !cfg)return order;
-  if (!order.text?.trim() || order.text.length>1000)throw Error('Введите приказ длиной до 1000 символов.');
-  const targets=gameWorld(game,catalog).nations.filter(n=>n!==game.nation && !game.members.includes(n));
-  const prompt='Историческая стратегия. Верни только JSON {"action":"trade|reform|diplomacy|unite","target":"имя державы"}. Выбери одно действие, для дипломатии и унии используй имя из списка targets. '+JSON.stringify({nation:game.nation,year:game.year,treasury:game.treasury,stability:game.stability,relations:game.relations,targets,order:order.text});
+  if(account)return {...order,...await accountOrder(game,order)};
+  const prompt=orderPrompt(game,order,catalog);
   const {url,headers,body,path}=buildPayload(cfg,prompt);
   let result;
   if(cfg.transport==='relay')result=await relayRequest({url,headers,body});
@@ -54,10 +59,5 @@ export async function resolvePersonalOrder(game,order,catalog) {
     if(!res.ok)throw Error('Провайдер вернул HTTP '+res.status+'. Проверьте модель, ключ и лимиты.');
     result=await res.json();
   }
-  try{
-    const raw=path.split('.').filter(Boolean).reduce((obj,key)=>obj?.[key],result);
-    const answer=typeof raw==='string'?JSON.parse(raw.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g,'')):raw;
-    if(typeof answer?.action!=='string' || !Object.hasOwn(actions,answer.action))throw Error();
-    return {...order,action:answer.action,target:answer.target};
-  }catch{throw Error('Провайдер не вернул распознаваемое игровое действие. Проверьте формат ответа.');}
+  return {...order,...parseOrder(result,path)};
 }

@@ -2,9 +2,12 @@ const known=new Set(['https://api.openai.com/v1/chat/completions','https://api.a
   'https://openrouter.ai/api/v1/chat/completions','https://api.deepseek.com/chat/completions',
   'https://api.groq.com/openai/v1/chat/completions','https://api.mistral.ai/v1/chat/completions',
   ...(process.env.PROVIDER_ENDPOINTS||'').split(',').map(s=>s.trim()).filter(Boolean)]);
-export async function providerRelay({url,headers,body}) {
+export function allowedEndpoint(url) {
   const gemini=/^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\/[a-zA-Z0-9._-]+:generateContent$/;
-  if(typeof url!=='string' || !(known.has(url)||gemini.test(url)))throw Object.assign(Error('Этот endpoint отсутствует в PROVIDER_ENDPOINTS сервера. Доступно прямое подключение.'),{status:403});
+  return typeof url==='string' && (known.has(url)||gemini.test(url));
+}
+export async function providerRelay({url,headers,body}) {
+  if(!allowedEndpoint(url))throw Object.assign(Error('Этот endpoint отсутствует в PROVIDER_ENDPOINTS сервера. Доступно прямое подключение.'),{status:403});
   const clean=new Headers({'Content-Type':'application/json'});
   for(const [k,v] of Object.entries(headers||{})){
     if(!/^[a-z0-9-]+$/i.test(k) || /^(host|connection|accept-encoding|cookie|proxy-.*|sec-.*|forwarded|x-forwarded-.*|transfer-encoding|content-length)$/i.test(k))throw Error('Недопустимый заголовок.');

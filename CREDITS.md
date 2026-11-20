@@ -24,3 +24,5 @@
 Справочник стран и административных единиц составлен на основе Countries States Cities Database, © Darshan Gada и участники проекта. Сводная база `shared/modern.json` доступна по ODbL 1.0, её содержимое по DbCL 1.0. Тексты лицензий входят в `web/modern-licenses`. Преобразователь и сводная база входят в архив исходного кода панели. [Версия за 2025 год](https://github.com/dr5hn/countries-states-cities-database/tree/2f33b1b1ddcdb426da9953371f25e7b162c8366d) · [Версия за 2026 год](https://github.com/dr5hn/countries-states-cities-database/tree/131ba72c0d81565354a755e0d900053259bc250e) · [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/)
 
 Рельеф карты получен из Natural Earth II, общественное достояние. Тайлы второго уровня собраны в эквидистантную цилиндрическую карту и преобразованы в оттенки серого. [Natural Earth](https://www.naturalearthdata.com/) · [Тайлы Cesium 1.130](https://github.com/CesiumGS/cesium/tree/1.130/packages/engine/Source/Assets/Textures/NaturalEarthII)
+
+Точечная Земля на приветственном экране построена по маске суши из карты Geo Countries за 2025 год. Звёздное поле сгенерировано для FreeHISTORIA.

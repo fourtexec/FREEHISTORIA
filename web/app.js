@@ -1,3 +1,5 @@
+import {accountDialog} from './account.js';
+import {account,restoreAccount,applyTheme,setTheme,theme} from './store.js';
 import {board,bindBoard} from './board.js';
 import {multiplayer} from './multiplayer.js';
 import {provider,providerSettings,resolvePersonalOrder} from './provider.js';
@@ -26,9 +28,11 @@ function dialogBody(title, content) {
 function chrome(page) {
   const current=({room:'multi',join:'multi',game:'games'})[page]||page;
   document.body.dataset.page=page;
-  $('topbar').innerHTML='<a class="brand" href="#home"><i>'+icon('globe',23)+'</i> FreeHISTORIA</a><nav class="main-nav" aria-label="Главная навигация">'+navItems.map(([key,ic,label])=>'<a href="#'+key+'" '+(current===key?'aria-current="page"':'')+'>'+icon(ic,17)+'<span>'+label+'</span></a>').join('')+'</nav><div class="tools"><button id="connection" class="status"><i class="'+status+'"></i>'+({local:'Локальная игра',online:'API подключён',offline:'API недоступен',checking:'Проверка API'}[status])+'</button><details class="settings-menu"><summary aria-label="Параметры игры">'+icon('sliders')+'</summary><div><button id="ai-settings">ИИ-провайдер</button><button id="settings">Подключение</button><button id="about">О проекте</button></div></details></div>';
+  $('topbar').innerHTML='<a class="brand" href="#welcome"><i>'+icon('globe',23)+'</i> FreeHISTORIA</a><nav class="main-nav" aria-label="Главная навигация">'+navItems.map(([key,ic,label])=>'<a href="#'+key+'" '+(current===key?'aria-current="page"':'')+'>'+icon(ic,17)+'<span>'+label+'</span></a>').join('')+'</nav><div class="tools"><button id="account-menu" class="account-pill">'+esc(account?.username||'Войти')+'</button><button id="connection" class="status"><i class="'+status+'"></i>'+({local:'Локальная игра',online:'API подключён',offline:'API недоступен',checking:'Проверка API'}[status])+'</button><details class="settings-menu"><summary aria-label="Параметры игры">'+icon('sliders')+'</summary><div><button id="ai-settings">ИИ-провайдер</button><button id="theme-switch">Сменить тему</button><button id="settings">Подключение</button><button id="about">О проекте</button></div></details></div>';
+  $('account-menu').onclick=openAccount;
+  $('theme-switch').onclick=async()=>{try{await setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');}catch(e){notify(e.message);}};
   $('ai-settings').onclick=()=>providerSettings(dialogBody,()=>{dialog.close();route();notify('Настройки ИИ обновлены.');});
-  $('settings').onclick = settings; $('connection').onclick = settings;
+  $('settings').onclick = ()=>settings(); $('connection').onclick = ()=>settings();
   $('about').onclick = ()=>dialogBody('О проекте','<p>FreeHISTORIA — бесплатная пошаговая стратегия на основе Open Historia. Выберите год и державу, принимайте решения и ведите летопись своей кампании.</p><p>Календарь и модель территориальных событий предоставлены Open Historia. Датированные границы предоставлены Cliopatria, обзорные карты — Historical Basemaps. Карты 2025 и 2026 годов используют Geo Countries и Country Boundary Map. Современные регионы взяты из Country State City. Сведения о правителях предоставляет Wikidata. Живопись и карта Ортелия представлены в собрании Wikimedia Commons.</p><div class="resource-links"><a href="./CREDITS.md">Авторы и источники ↗</a><a href="./freehistoria-source.tar.gz" download>Скачать исходный код</a><a href="./LICENSE">Лицензия AGPL-3.0</a></div>');
 
 }
@@ -40,16 +44,22 @@ async function connectionStatus() {
   chrome(activePage);
   if ((freeOrders || provider()) && $('action') && !$('action').querySelector('[value="order"]')) $('action').add(new Option('Свой приказ · ИИ','order'));
 }
-function settings() {
-  dialogBody('Настройки подключения','<form id="settingsForm"><label for="mode">Хранение кампаний</label><select id="mode"><option value="local">В этом браузере</option><option value="server">На сервере FreeHISTORIA</option></select><div id="apiField"><label for="url">Адрес API</label><input id="url" type="url" placeholder="https://api.example.org" value="'+esc(apiUrl())+'"></div><p class="hint">Для каждого сервера и локального режима ведётся своя библиотека кампаний. Ключ доступа хранится в этом браузере.</p><p class="error" role="alert"></p><button class="primary">Сохранить настройки '+icon('arrow')+'</button></form>');
-  $('mode').value = apiUrl()?'server':'local';
+function openAccount(){
+  accountDialog({open:dialogBody,settings:()=>settings(true),done:()=>{dialog.close();applyTheme();route();}});
+}
+function welcome(){
+  main.innerHTML='<section class="welcome"><div class="welcome-copy"><h1>Добро пожаловать в FreeHISTORIA</h1><p>Игра-песочница альтернативной истории</p><a class="welcome-start" href="#home">Начать '+icon('arrow',18)+'</a></div><img class="welcome-earth" src="./assets/welcome-earth.webp" alt=""></section>';
+}
+function settings(forLogin=false) {
+  dialogBody('Настройки подключения','<form id="settingsForm"><label for="mode">Игровой сервер</label><select id="mode"><option value="local">Без подключения</option><option value="server">Подключить API FreeHISTORIA</option></select><div id="apiField"><label for="url">Адрес API</label><input id="url" type="url" placeholder="https://api.example.org" value="'+esc(apiUrl())+'"></div><p class="hint">Для аккаунтов и мультиплеера нужен адрес общего API. Одиночная игра доступна и без подключения.</p><p class="error" role="alert"></p><button class="primary">Сохранить настройки '+icon('arrow')+'</button></form>');
+  $('mode').value = apiUrl()||forLogin===true?'server':'local';
   const sync = ()=>{ $('apiField').hidden = $('mode').value==='local'; $('url').required = !$('apiField').hidden; $('url').disabled=$('apiField').hidden; };
   $('mode').onchange=sync; sync();
   $('settingsForm').onsubmit = async e=>{
     e.preventDefault(); const btn=e.target.querySelector('button'); btn.disabled=true;
     try {
       await configure($('mode').value==='local'?'':$('url').value.trim());
-      status = apiUrl()?'online':'local'; dialog.close(); if(!['multi','join'].includes(activePage)) location.hash='home'; await route(); notify('Настройки сохранены.');
+      status = apiUrl()?'online':'local'; dialog.close(); if(forLogin===true && apiUrl()){openAccount();connectionStatus();return;} if(!['multi','join'].includes(activePage)) location.hash='home'; await route(); notify('Настройки сохранены.');
     } catch(err) { dialog.querySelector('.error').textContent = err.message==='Failed to fetch'?'Проверьте адрес, доступность API и разрешённый источник панели.':err.message; }
     finally {btn.disabled=false;}
   };
@@ -175,10 +185,11 @@ async function campaign(id,version) {
 }
 async function route() {
   const version=++renderId;const [fragment,search]=location.hash.slice(1).split('?');const [page,id]=fragment.split('/');
-  activePage=['games','game','atlas','multi','join','room'].includes(page)?page:'home';chrome(activePage);window.scrollTo(0,0);
+  activePage=!page||page==='welcome'?'welcome':['games','game','atlas','multi','join','room'].includes(page)?page:'home';chrome(activePage);window.scrollTo(0,0);
   try {
+    if(activePage==='welcome'){welcome();return;}
     if(['multi','join','room'].includes(activePage)){
-      const ui=multiplayer({main,catalog,esc,settings,current:()=>version===renderId});
+      const ui=multiplayer({main,catalog,esc,settings,openAccount,current:()=>version===renderId});
       if(activePage==='room')await ui.room(id);else await ui.hub(activePage==='join'?id:'',new URLSearchParams(search).get('server'),activePage==='multi'?Number(id):undefined);
     }else if(activePage==='game')await campaign(id,version);
     else if(activePage==='games')await games(version);
@@ -192,6 +203,13 @@ async function route() {
 try {
   const getJson=async path=>{const r=await fetch(path);if(!r.ok)throw Error('Не удалось загрузить '+path);return r.json();};
   const [config,data]=await Promise.all([getJson('./config.json'),getJson('./shared/catalog.json')]);
-  initStore(config);catalog=data;status=apiUrl()?'checking':'local';await route();connectionStatus();
+  initStore(config);catalog=data;applyTheme();
+  matchMedia('(prefers-color-scheme:dark)').addEventListener('change',applyTheme);
+  window.addEventListener('storage',e=>{
+    if(e.key==='freehistoria.v1.endpoint'||e.key==='freehistoria.v1.session.'+apiUrl())location.reload();
+    if(e.key==='freehistoria.v1.theme')applyTheme();
+  });
+  try{await restoreAccount();}catch(err){notify(err.message);}
+  status=apiUrl()?'checking':'local';await route();connectionStatus();
   window.addEventListener('hashchange',route);
 }catch(err){main.textContent='Ошибка запуска: '+err.message;}

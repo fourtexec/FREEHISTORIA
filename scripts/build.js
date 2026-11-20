@@ -10,6 +10,6 @@ export function build(apiUrl = '') {
   cpSync('LICENSE', 'dist/LICENSE');
   cpSync('CREDITS.md', 'dist/CREDITS.md');
   writeFileSync('dist/config.json', JSON.stringify({ apiUrl: apiUrl.replace(/\/+$/, '') }));
-  execFileSync('tar', ['-czf','dist/freehistoria-source.tar.gz','api','scripts','shared','web','tests','.github/workflows','package.json','README.md','LICENSE','CREDITS.md','.gitignore'], { stdio: 'inherit' });
+  execFileSync('tar', ['-czf','dist/freehistoria-source.tar.gz','api','scripts','shared','web','tests','.github/workflows','package.json','start.sh','README.md','LICENSE','CREDITS.md','.gitignore'], { stdio: 'inherit' });
 }
 if (import.meta.url === pathToFileURL(process.argv[1]).href) build(process.env.API_URL);
