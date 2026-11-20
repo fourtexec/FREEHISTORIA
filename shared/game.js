@@ -1,4 +1,5 @@
 export { mapYearFor, validateYear } from './world.js';
+import modern from './modern.json' with {type:'json'};
 import { worldAt, gameWorld, validateYear } from './world.js';
 import { shiftGameYear } from './vendor/gameDates.js';
 import { scriptedImpactFields } from './vendor/scriptedImpacts.js';
@@ -18,6 +19,12 @@ const names = new Map(Object.entries({
   'United States': 'США', Parthia: 'Парфия', 'Ptolemaic Kingdom': 'Царство Птолемеев',
   Venice: 'Венеция', 'Papal States': 'Папская область', 'Ming Dynasty': 'Империя Мин'
 }));
+const countryNames = new Intl.DisplayNames('ru', {type:'region'});
+for (const {records} of Object.values(modern)) {
+  for (const {nation,iso2} of records) {
+    if (!names.has(nation) && /^[A-Z]{2}$/.test(iso2)) names.set(nation,countryNames.of(iso2));
+  }
+}
 export const nationName = id => names.get(id) || id;
 export const yearName = year => year < 0 ? Math.abs(year) + ' г. до н. э.' : year + ' г.';
 export const actions = {

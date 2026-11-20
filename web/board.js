@@ -21,11 +21,28 @@ function closeButton(){
 export function bindBoard(root) {
   const sheets=root.querySelectorAll('.board-sheet');
   const buttons=root.querySelectorAll('[data-sheet]');
-  function show(key) {
-    for(const sheet of sheets)sheet.hidden=sheet.id!=='sheet-'+key;
-    for(const button of buttons)button.setAttribute('aria-expanded',String(button.dataset.sheet===key));
+  function syncButtons() {
+    for(const button of buttons){
+      const sheet=root.querySelector('#'+button.getAttribute('aria-controls'));
+      button.setAttribute('aria-expanded',String(!sheet.hidden));
+    }
   }
-  for(const button of buttons)button.onclick=()=>show(button.getAttribute('aria-expanded')==='true'?'':button.dataset.sheet);
-  for(const button of root.querySelectorAll('.sheet-close'))button.onclick=()=>show('');
+  function show(key) {
+    const wide=window.matchMedia('(min-width: 900px)').matches;
+    for(const sheet of sheets){
+      const target=sheet.id==='sheet-'+key;
+      const independent=wide && (key==='country' || sheet.id==='sheet-country');
+      if(target || !independent)sheet.hidden=!target;
+    }
+    syncButtons();
+  }
+  for(const button of buttons)button.onclick=()=>{
+    const sheet=root.querySelector('#'+button.getAttribute('aria-controls'));
+    if(sheet.hidden)show(button.dataset.sheet);
+    else{sheet.hidden=true;syncButtons();}
+  };
+  for(const button of root.querySelectorAll('.sheet-close'))button.onclick=()=>{
+    button.closest('.board-sheet').hidden=true;syncButtons();
+  };
   return show;
 }

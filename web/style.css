@@ -975,6 +975,24 @@ main:has(.board) {
   border-left:1px solid var(--map-border);
 }
 
+@media(min-width:641px) {
+  #sheet-action {
+    display:flex;
+    flex-direction:column;
+  }
+  #sheet-action form {
+    flex:1 0 auto;
+  }
+}
+@media(min-width:900px) {
+  #sheet-country {
+    right:8px;
+    left:auto;
+    top:80px;
+    width:min(325px,29vw);
+  }
+}
+
 @media(max-width:800px) {
   #topbar {
     gap:9px;

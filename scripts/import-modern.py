@@ -60,7 +60,7 @@ def import_year(year):
         nation = country.get('name', name)
         if nation in records:
             raise ValueError('Duplicate entity: '+nation)
-        records[nation] = dict(nation=nation, qid=country.get('wikiDataId') or '', parent=p.get('administering_state_name') or '',
+        records[nation] = dict(nation=nation, iso2=country.get('iso2') or '', qid=country.get('wikiDataId') or '', parent=p.get('administering_state_name') or '',
                                area=country.get('area_sq_km'), capital=country.get('capital'), currency=country.get('currency'),
                                regions=sorted(set(regions.get(country.get('id'), []))))
         shapes.append([nation, path])
