@@ -1,4 +1,5 @@
 const shapes = {
+  chat:'<path d="M21 12a8 8 0 0 1-8 8H8l-6 2 2-6A8 8 0 1 1 21 12Z"/>',
   back:'<path d="m14 5-7 7 7 7"/>',
   bolt:'<path d="m14 2-9 12h6l-1 8 9-13h-6z"/>',
   play:'<path d="m6 3 15 9-15 9z"/>',

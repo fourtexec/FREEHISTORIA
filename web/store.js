@@ -1,10 +1,11 @@
+import {messageText,diplomaticReply} from './shared/diplomacy.js';
 import { newGame, playTurn } from './shared/game.js';
 
 const prefix = 'freehistoria.v1.';
 export let account=null;
 const sessionKey=()=>prefix+'session.'+endpoint;
 const localPrefix=()=>account?prefix+'personal.'+endpoint+'.'+account.id+'.':prefix+'game.';
-const remoteGames=()=>endpoint && account?.settings.storage!=='local';
+export const remoteGames=()=>endpoint && account?.settings.storage!=='local';
 export const theme=()=>account?.settings.theme||localStorage.getItem(prefix+'theme')||'dark';
 export function applyTheme(){
   const mode=theme();
@@ -88,7 +89,7 @@ async function request(path, body, resource='campaigns') {
   let response;
   try {
     response = await fetch(endpoint + '/v1/' + resource + path, {
-      method: body ? 'POST' : 'GET', signal: AbortSignal.timeout(body?.action==='order'||path==='/order'||resource==='provider'?65000:10000),
+      method: body ? 'POST' : 'GET', signal: AbortSignal.timeout(body?.action==='order'||body?.model===true||path==='/order'||resource==='provider'?65000:10000),
       headers: {Authorization:'Bearer '+token(), ...(body ? {'Content-Type':'application/json'} : {})},
       body: body ? JSON.stringify(body) : undefined
     });
@@ -138,3 +139,21 @@ export function requestId() {
   const hex=Array.from(bytes,n=>n.toString(16).padStart(2,'0')).join('');
   return [hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join('-');
 }
+
+export async function conversation(game,partner,catalog,text,room=false,model=false){
+  const path='/'+encodeURIComponent(game.id)+'/chat?'+new URLSearchParams({partner});
+  const body=text===undefined?undefined:{text:messageText(text),model};
+  if(room)return roomRequest(path,body);
+  if(remoteGames())return request(path,body);
+  const key='freehistoria.chat.'+JSON.stringify([localPrefix(),game.id,partner]);
+  const read=()=>JSON.parse(localStorage.getItem(key)||'[]');
+  if(!body)return read();
+  return navigator.locks.request(key,()=>{
+    const reply=diplomaticReply(game,partner,body.text,catalog);
+    const logs=read().concat({sender:game.nation,text:body.text},{sender:partner,text:reply}).slice(-100);
+    localStorage.setItem(key,JSON.stringify(logs));return logs;
+  });
+}
+
+export const presetRequest=(path='',body)=>request(path,body,'presets');
+export const draftKey=()=>prefix+'drafts.'+JSON.stringify([endpoint,account?.id||'guest']);

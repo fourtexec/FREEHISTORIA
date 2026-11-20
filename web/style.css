@@ -1192,3 +1192,25 @@ main:has(.welcome) {width:100%;padding:0;margin:0}
   #connection {max-width:42px;overflow:hidden;white-space:nowrap;font-size:0}
   .tools {gap:4px}
 }
+
+#choose-map{width:100%;aspect-ratio:2.65;display:block;object-fit:cover;border-radius:8px;margin-top:12px;cursor:pointer}
+#country-tabs{margin:10px 0;flex-wrap:wrap}
+.library-controls{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0}
+.library-controls input{flex:2;min-width:180px}.library-controls select{flex:1;min-width:170px}
+.secondary,#nation-results button{padding:8px 12px;border:1px solid currentColor;border-radius:7px;color:inherit;background:transparent}
+.secondary{margin:8px 0}.order-list{padding:0 0 0 20px;font-size:13px}.order-list:empty{display:none}
+.order-list button{float:right;color:inherit;font-size:17px;line-height:1}.order-list li{margin:5px 0}
+.transcript{max-height:32vh;overflow:auto;overflow-wrap:anywhere}.transcript p{padding:6px 9px;background:#152b40;border-radius:7px}.transcript b{display:block;color:white}
+#nation-results{display:grid;gap:5px;margin-top:10px}#nation-results button{text-align:left;border-color:var(--map-border)}
+@media(max-width:760px){.board-dock button{padding:7px}.board-dock button span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}}
+.workshop-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:12px}
+.preset-row{padding:16px;border:1px solid var(--line);border-radius:12px;overflow-wrap:anywhere}
+.preset-row button{margin:4px 6px 4px 0}.preset-row select{width:auto}
+.board .stats{flex-wrap:wrap}
+.envoy{border-left:3px solid #d5af6c;padding:6px 10px;background:#182a38;font-size:13px}.envoy p{margin:4px 0}
+.map-layers{position:absolute;right:10px;bottom:59px;background:var(--map-panel);border:1px solid var(--map-border);padding:7px 10px;border-radius:8px;color:#edf3ff;font-size:12px}
+.map-layers summary{cursor:pointer;display:flex;align-items:center;gap:6px}.map-layers[open]{max-width:230px}
+.map-layers label{display:block;color:inherit;margin:5px 0}.map-layers input{width:auto}
+.map-layers select{font-size:12px}.map-layers small{display:block}
+.board:has(.board-sheet:not([hidden])) .map-layers{bottom:54px}
+@media(max-width:640px){.board:has(.board-sheet:not([hidden])) .map-layers{top:11px;bottom:auto;left:88px;right:auto}.map-layers[open]{z-index:1}}

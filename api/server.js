@@ -1,3 +1,6 @@
+import {presetService} from './presets.js';
+import {messageStore} from './messages.js';
+import {messageText,diplomaticReply} from '../shared/diplomacy.js';
 import {serveSite} from './site.js';
 import { biography } from '../shared/person.js';
 import { providerRelay } from './relay.js';
@@ -5,7 +8,7 @@ import { historyService } from './history.js';
 import { roomService } from './rooms.js';
 import http from 'node:http';
 import {isIP} from 'node:net';
-import { interpretOrder, providerOrder } from './advisor.js';
+import { interpretOrder, providerOrder, envoyReply } from './advisor.js';
 import {accountService} from './accounts.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -23,7 +26,9 @@ db.exec(`PRAGMA journal_mode=WAL;
   CREATE INDEX IF NOT EXISTS campaigns_owner ON campaigns(owner, updated);`);
 const history = historyService(db,catalog);
 const accounts=accountService(db,folder);
-const rooms = roomService(db, catalog, accounts);
+const presets=presetService(db,accounts);
+const messages=messageStore(db);
+const rooms = roomService(db, catalog, accounts,messages);
 const port = Number(process.env.API_PORT || 8787);
 const origins = (process.env.ALLOWED_ORIGINS ?? 'https://fourtexec.site,http://localhost:5173,http://127.0.0.1:5173').split(',').map(s => s.trim());
 const fail = (status, message) => Object.assign(new Error(message), { status });
@@ -75,14 +80,17 @@ const server = http.createServer(async (req, res) => {
     if(path==='/v1/auth/challenge' && req.method==='GET')return send(200,accounts.challenge(ip));
     const auth=/^\/v1\/auth\/(register|login)$/.exec(path);
     if(auth && req.method==='POST')return send(200,await accounts.authenticate(auth[1],await jsonBody(req),ip));
-    const route = /^\/v1\/campaigns(?:\/([^/]+)(\/turns)?)?$/.exec(path);
-    const roomRoute = /^\/v1\/rooms(?:\/([^/]+)(?:\/(start|turns))?)?$/.exec(path);
+    const route = /^\/v1\/campaigns(?:\/([^/]+)(?:\/(turns|chat))?)?$/.exec(path);
+    const presetRoute=/^\/v1\/presets(?:\/([^/]+)(?:\/(star))?)?$/.exec(path);
+    const roomRoute = /^\/v1\/rooms(?:\/([^/]+)(?:\/(start|turns|chat))?)?$/.exec(path);
     const relay = path==='/v1/provider' && req.method==='POST';
     const me=path==='/v1/me',logout=path==='/v1/auth/logout',personalOrder=path==='/v1/me/order';
-    if (!route && !roomRoute && !relay && !me && !logout && !personalOrder) throw fail(404, 'Маршрут не найден.');
+    if (!route && !presetRoute && !roomRoute && !relay && !me && !logout && !personalOrder) throw fail(404, 'Маршрут не найден.');
     const token=(req.headers.authorization||'').replace(/^Bearer /,'');
     if(!req.headers.authorization?.startsWith('Bearer '))throw fail(401,'Требуется вход или ключ игрока.');
     const owner=accounts.owner(token);
+    if(presetRoute)return send(200,presets({id:presetRoute[1],op:presetRoute[2],method:req.method,owner,
+      input:req.method==='POST'?await jsonBody(req):{},params:new URL(req.url,'http://localhost').searchParams}));
     if(me||logout||personalOrder){
       if(!owner.startsWith('account:'))throw fail(401,'Войдите в аккаунт.');
       if(me && req.method==='GET')return send(200,accounts.profile(owner));
@@ -104,7 +112,7 @@ const server = http.createServer(async (req, res) => {
     const load = id => db.prepare('SELECT state FROM campaigns WHERE id=? AND owner=?').get(id, owner);
     if (!id && req.method === 'GET') {
       return send(200, db.prepare(`SELECT id, json_extract(state,'$.nation') AS nation,
-        json_extract(state,'$.startYear') AS startYear, json_extract(state,'$.year') AS year, turn
+        json_extract(state,'$.title') AS title, json_extract(state,'$.date') AS date, updated, json_extract(state,'$.startYear') AS startYear, json_extract(state,'$.year') AS year, turn
         FROM campaigns WHERE owner=? ORDER BY updated DESC`).all(owner));
     }
     if (!id && req.method === 'POST') {
@@ -120,17 +128,28 @@ const server = http.createServer(async (req, res) => {
     if (id) {
       if (!load(id)) throw fail(404, 'Кампания не найдена.');
       if (!turns && req.method === 'GET') return send(200, JSON.parse(load(id).state));
-      if (turns && req.method === 'POST') {
+      if(turns==='chat' && ['GET','POST'].includes(req.method)){
+        const game=JSON.parse(load(id).state);
+        const partner=new URL(req.url,'http://localhost').searchParams.get('partner')||'';
+        if(req.method==='POST'){
+          const body=await jsonBody(req),text=messageText(body.text);
+          let reply=diplomaticReply(game,partner,text,catalog);
+          if(body.model===true){
+            const messagesBefore=messages.list('solo',id,game.nation,partner);
+            reply=await envoyReply(game,partner,text,messagesBefore);
+            const latest=messages.list('solo',id,game.nation,partner);
+            if(JSON.parse(load(id).state).turn!==game.turn||latest.at(-1)?.id!==messagesBefore.at(-1)?.id)throw fail(409,'Пока делегация готовила ответ, кампания изменилась. Обновите переписку.');
+          }
+          messages.append('solo',id,game.nation,partner,text,reply);
+        }
+        return send(200,messages.list('solo',id,game.nation,partner));
+      }
+      if (turns==='turns' && req.method === 'POST') {
         const body = await jsonBody(req);
         const state = JSON.parse(load(id).state);
         if (state.turn !== body.expectedTurn) throw fail(409, 'Кампания уже обновлена. Загрузите последний ход.');
         const interpreted = body.action === 'order' ? await interpretOrder(state, body, catalog) : null;
         const next = playTurn(state, interpreted ? {...body, ...interpreted} : body, catalog);
-        if (interpreted) {
-          const event = next.history.at(-1);
-          event.order = body.text.trim();
-          event.text = interpreted.narrative + ' ' + event.text;
-        }
         const saved = db.prepare('UPDATE campaigns SET state=?, turn=?, updated=? WHERE id=? AND owner=? AND turn=?')
           .run(JSON.stringify(next), next.turn, Date.now(), id, owner, body.expectedTurn);
         if (!saved.changes) throw fail(409, 'Кампания уже обновлена.');

@@ -64,6 +64,9 @@ test('API isolates owners, persists games and commits one concurrent turn', asyn
   const path='campaigns/'+game.id;
   const otherKey=randomBytes(32).toString('hex');
   assert.equal((await call(path,undefined,otherKey)).status,404);
+  const partner=worldAt(game.mapYear,catalog,game.mapSource).nations.find(n=>n!==game.nation);
+  const envoy=await call(path+'/chat?partner='+encodeURIComponent(partner),{text:'Обсудим торговлю',model:true});
+  assert.equal(envoy.status,200);assert.match((await envoy.json())[1].text,/ярмарка/);
   assert.deepEqual(await (await call('campaigns',undefined,otherKey)).json(),[]);
   const order={expectedTurn:0,action:'trade'};
   const attempts=await Promise.all([call(path+'/turns',order),call(path+'/turns',order)]);
@@ -112,7 +115,7 @@ test('API isolates owners, persists games and commits one concurrent turn', asyn
     assert.equal(history.records[0].qid,'Q183');
     assert.equal(history.facts.some(f=>f.qid==='Q61053' && f.kind==='governmentHead'),year===2025);
     assert.ok(history.facts.some(f=>f.kind==='head'));
-    const modern=await (await roomCall('rooms',{year,nation,name:'Хозяин'})).json();
+    const modern=await (await roomCall('rooms',{year,nation,name:'Хозяин',interval:'week'})).json();
     const preview=await (await roomCall('rooms/preview',{invite:modern.invite},otherKey)).json();
     assert.equal(modern.mapYear,year);
     assert.equal(preview.mapSource,'modern');
@@ -121,9 +124,10 @@ test('API isolates owners, persists games and commits one concurrent turn', asyn
     assert.equal(second.players.length,2);
     const modernPath='rooms/'+modern.id;
     const begun=await (await roomCall(modernPath+'/start',{revision:second.revision})).json();
-    const firstMove=await (await roomCall(modernPath+'/turns',{revision:begun.revision,action:'trade'})).json();
+    const firstMove=await (await roomCall(modernPath+'/turns',{revision:begun.revision,action:'plan',orders:[{action:'infrastructure'},{action:'trade'}]})).json();
+    assert.equal(firstMove.players[0].roads,1);
     const next=await (await roomCall(modernPath+'/turns',{revision:firstMove.revision,action:'trade'},otherKey)).json();
-    assert.equal(next.year,year+1);
+    assert.equal(next.year,year);assert.equal(next.date,year+'-01-08');
     assert.equal(next.mapYear,year);
   }
   await stop();base=await start();

@@ -32,3 +32,22 @@ export async function providerOrder(cfg,game,order,catalog){
   const answer=parseOrder(await providerRelay(payload),payload.path);
   return {...answer,narrative:'Приказ исполнен.'};
 }
+
+export async function envoyReply(game,partner,text,transcript){
+  if(!process.env.OLLAMA_MODEL)throw Object.assign(Error('На сервере не настроена модель Ollama.'),{status:422});
+  const context={date:game.date||String(game.year),scenario:game.briefing||'',player:nationName(game.nation),delegation:nationName(partner),
+    relations:game.relations.find(r=>r.nation===partner)?.value??25,events:game.history.slice(-4).map(e=>e.text),
+    conversation:transcript.slice(-8).map(m=>({speaker:nationName(m.sender),message:m.text})),message:text};
+  try{
+    const response=await fetch(new URL('/api/chat',process.env.OLLAMA_URL||'http://127.0.0.1:11434'),{
+      method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(45000),
+      body:JSON.stringify({model:process.env.OLLAMA_MODEL,stream:false,options:{num_predict:300},messages:[
+        {role:'system',content:'Ты дипломат указанной державы в вымышленной альтернативной истории. Веди переговоры на русском с учётом даты, отношений и хода разговора. Дай краткий ответ от лица делегации. Можешь предложить условия. Игровые ресурсы и границы меняются только решениями игрока.'},
+        {role:'user',content:JSON.stringify(context)}]})
+    });
+    if(!response.ok)throw Error();
+    const answer=(await response.json()).message?.content;
+    if(typeof answer!=='string'||!answer.trim())throw Error();
+    return answer.trim().slice(0,2000);
+  }catch{throw Object.assign(Error('Модель не ответила. Повторите сообщение или выберите ответы по правилам.'),{status:503});}
+}

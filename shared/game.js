@@ -1,7 +1,9 @@
+import {missionByType,nextInvitation} from './envoys.js';
 export { mapYearFor, validateYear } from './world.js';
 import modern from './modern.json' with {type:'json'};
 import { worldAt, gameWorld, validateYear } from './world.js';
-import { shiftGameYear } from './vendor/gameDates.js';
+import { advanceDate, january } from './calendar.js';
+import { gameDateYear } from './vendor/gameDates.js';
 import { scriptedImpactFields } from './vendor/scriptedImpacts.js';
 
 export const scenarios = [
@@ -29,35 +31,81 @@ export const nationName = id => names.get(id) || id;
 export const yearName = year => year < 0 ? Math.abs(year) + ' г. до н. э.' : year + ' г.';
 export const actions = {
   trade: { title: 'Развивать торговлю', detail: 'Доход +9, влияние +1' },
+  infrastructure: {title:'Построить дороги',detail:'Казна −12. Каждая сеть дорог добавляет 2 монеты к доходу от торговли.'},
+  academy: {title:'Открыть академию',detail:'Казна −10, влияние +6. Каждая академия усиливает будущие реформы.'},
+  relief: {title:'Выдать помощь жителям',detail:'Казна −10, стабильность +14.'},
   reform: { title: 'Провести реформу', detail: 'Казна −6, стабильность +9' },
   diplomacy: { title: 'Отправить посольство', detail: 'Казна −4, отношения +25, влияние +5' },
+  invitation: {title:'Принять предложение посланника',detail:'Условия предложения указаны в сообщении посланника.'},
   unite: { title: 'Заключить унию', detail: 'Отношения от 75, казна −15. Держава войдёт в союз.' }
 };
-export function newGame({ year, nation }, catalog, id = crypto.randomUUID()) {
+export const difficulties = {
+  sandbox: ['Песочница',100,85], easy: ['Лёгкая',65,75], normal: ['Обычная',40,60],
+  hard: ['Сложная',25,50], severe: ['Кризис',10,35]
+};
+export const objectives={free:'Свободная игра',prosperity:'Накопить 150 монет',prestige:'Достичь 80 влияния',union:'Заключить первую унию'};
+export function newGame({ year, nation, title='', difficulty='normal', briefing='', objective='free' }, catalog, id = crypto.randomUUID()) {
   validateYear(year);
   if (typeof nation !== 'string' || !nation.trim() || nation.trim().length > 100) throw Error('Название державы должно содержать от 1 до 100 символов.');
+  if(typeof title!=='string'||title.trim().length>100)throw Error('Название кампании должно быть не длиннее 100 символов.');
+  if(!Object.hasOwn(difficulties,difficulty))throw Error('Выберите сложность.');
+  if(typeof briefing!=='string'||briefing.length>1500||!Object.hasOwn(objectives,objective))throw Error('Проверьте описание и цель сценария.');
+  const [,treasury,stability]=difficulties[difficulty];
   const {mapYear,mapSource} = worldAt(year,catalog);
-  return { id, nation: nation.trim(), startYear: year, year, mapYear, mapSource,
-    turn: 0, treasury: 40, stability: 60, influence: 20, relations: [], members: [], history: [] };
+  return { id, title:title.trim(), difficulty, briefing, objective, date:january(year), nation: nation.trim(), startYear: year, year, mapYear, mapSource,
+    turn: 0, treasury, stability, influence: 20, relations: [], members: [], history: [] };
 }
-export function playTurn(previous, { action, target, expectedTurn }, catalog) {
+export function playTurn(previous, { action, target, expectedTurn, orders, interval, text, narrative }, catalog, excludedNations=[]) {
   if (expectedTurn !== previous.turn) throw Error('Кампания уже обновлена. Загрузите последний ход.');
-  if (!Object.hasOwn(actions, action)) throw Error('Выберите действие.');
-  const game = structuredClone(previous);
-  game.year = shiftGameYear(game.year, 1);
-  if (game.year > 999999) throw Error('Достигнут последний год календаря.');
+  const plan=action==='plan'?orders:[{action,target,text,narrative}];
+  if(!Array.isArray(plan)||plan.length<1||plan.length>6)throw Error('На ход можно запланировать от одного до шести решений.');
+  const game=structuredClone(previous);
+  game.date=advanceDate(previous.date||january(previous.year),interval);
+  game.year=gameDateYear(game.date);
+  game.turn++;
+  for(const order of plan){
+    if(!order||!Object.hasOwn(actions,order.action))throw Error('Выберите действие.');
+    if(order.action==='invitation' && excludedNations.includes(game.invitation?.nation))throw Error('Держава посланника больше недоступна.');
+    applyAction(game,order,catalog);
+  }
+  if(game.turn%3===0){
+    const supported=game.stability>=65;
+    if(supported)game.treasury+=8;
+    else game.stability=Math.max(0,game.stability-4);
+    game.history.at(-1).text+=supported?' Жители внесли ещё 8 монет налогового дохода.':' Недовольство налогами снизило стабильность на 4.';
+  }
+  nextInvitation(game,gameWorld(game,catalog).nations,excludedNations);
+  const achieved={prosperity:game.treasury>=150,prestige:game.influence>=80,union:game.members.length>0};
+  if(!game.achieved && achieved[game.objective]===true){
+    game.achieved=game.date;game.history.at(-1).text+=' Цель сценария достигнута: '+objectives[game.objective]+'.';
+  }
+  return game;
+}
+function applyAction(game,{action,target,text:order,narrative},catalog){
   const name = nationName(target);
-  const cost = { trade: 0, reform: 6, diplomacy: 4, unite: 15 }[action];
+  const mission=action==='invitation'?missionByType(game.invitation?.type):null;
+  if(action==='invitation' && (!mission||game.members.includes(game.invitation.nation)))throw Error('Сейчас нет доступного предложения посланника.');
+  const cost = { invitation:mission?.cost, trade: 0, reform: 6, diplomacy: 4, unite: 15, infrastructure:12, academy:10, relief:10 }[action];
   if (cost > game.treasury) throw Error('Для этого решения недостаточно средств.');
   game.treasury -= cost;
-  game.turn++;
   let text, impact = {};
-  if (action === 'trade') {
-    game.treasury += 9;
+  if(action==='invitation'){
+    game.treasury+=mission.returns;game.stability+=mission.stability;game.influence+=mission.influence;
+    const foreign=nationName(game.invitation.nation);
+    text=mission.title+' · '+foreign+'. Делегации выполнили договор. Доход '+mission.returns+', влияние +'+mission.influence+', стабильность +'+mission.stability+'.';
+    delete game.invitation;
+  }else if (action === 'trade') {
+    game.treasury += 9+2*(game.roads||0);
     game.influence++;
     text = 'Новые торговые соглашения пополнили казну и укрепили влияние державы.';
+  } else if(action==='infrastructure'){
+    game.roads=(game.roads||0)+1;text='Торговцы получили новую дорожную сеть. Доход торгового решения вырос до '+(9+2*game.roads)+' монет.';
+  } else if(action==='academy'){
+    game.academies=(game.academies||0)+1;game.influence+=6;text='Открылась академия. Учёные помогут советам проводить реформы.';
+  } else if(action==='relief'){
+    game.stability+=14;text='Местные общины распределили помощь среди жителей. Поддержка правительства выросла.';
   } else if (action === 'reform') {
-    game.stability += 9;
+    game.stability += 9+(game.academies||0);
     text = 'Местные советы приняли реформу. Поддержка правительства выросла.';
   } else {
     if (!gameWorld(game,catalog).nations.includes(target) || target === game.nation || game.members.includes(target)) throw Error('Выберите самостоятельную державу на карте.');
@@ -78,17 +126,9 @@ export function playTurn(previous, { action, target, expectedTurn }, catalog) {
       text = 'Держава «' + name + '» вступила в унию. Её земли теперь отмечены на карте цветом вашего союза.';
     }
   }
-  if (game.turn % 3 === 0) {
-    if (game.stability >= 65) {
-      game.treasury += 8;
-      text += ' Поддержка жителей принесла ещё 8 монет налогового дохода.';
-    } else {
-      game.stability -= 4;
-      text += ' Недовольство сбором налогов снизило стабильность на 4.';
-    }
-  }
   game.stability = Math.max(0, Math.min(100, game.stability));
   game.influence = Math.min(100, game.influence);
-  game.history.push({ year: game.year, action, text, ...impact });
-  return game;
+  game.history.push({date:game.date, year:game.year, turn:game.turn, action, ...impact,
+    ...(typeof order==='string'&&order.trim()?{order:order.trim().slice(0,1000)}:{}),
+    text:(typeof narrative==='string'&&narrative.trim()?narrative.trim().slice(0,1200)+' ':'')+text});
 }

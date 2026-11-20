@@ -14,3 +14,19 @@ export function parseOrder(result,path){
     return {action:answer.action,target:answer.target};
   }catch{throw Error('Провайдер не вернул распознаваемое игровое действие. Проверьте формат ответа.');}
 }
+
+const patterns=[
+  ['unite',/уни[юия]|объедин|союз|union|unite/i],
+  ['diplomacy',/посол|посоль|дипломат|переговор|embassy|diploma/i],
+  ['academy',/академ|университет|наук|школ|academy|school/i],
+  ['infrastructure',/дорог|инфраструктур|мост|road|bridge/i],
+  ['relief',/помощ|пособи|помочь|relief|subsid/i],
+  ['trade',/торг|рынок|ярмарк|купц|trade|market/i],
+  ['reform',/реформ|совет|закон|reform|council/i]
+];
+export function localOrder(text,target){
+  if(typeof text!=='string'||!text.trim()||text.length>1000)throw Error('Введите приказ до 1000 символов.');
+  const action=patterns.find(([,regex])=>regex.test(text))?.[0];
+  if(!action)throw Error('Уточните приказ: торговля, реформа, посольство, уния, строительство дорог, академия или помощь жителям.');
+  return {action,target,text:text.trim()};
+}

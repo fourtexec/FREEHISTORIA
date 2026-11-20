@@ -1,3 +1,5 @@
+import {messageText} from '../shared/diplomacy.js';
+import {intervals} from '../shared/calendar.js';
 import { gameWorld } from '../shared/world.js';
 import { randomBytes, randomUUID, randomInt } from 'node:crypto';
 import { newGame, playTurn } from '../shared/game.js';
@@ -10,7 +12,7 @@ const requireName = value => {
   return value.trim();
 };
 
-export function roomService(db, catalog, accounts) {
+export function roomService(db, catalog, accounts,messages) {
   db.exec(`CREATE TABLE IF NOT EXISTS rooms (
       id TEXT PRIMARY KEY, invite TEXT NOT NULL UNIQUE, revision INTEGER NOT NULL, state TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS room_players (
@@ -41,7 +43,7 @@ export function roomService(db, catalog, accounts) {
   }
   function addPlayer(state, body) {
     const name = requireName(body.name);
-    const game = newGame({year:state.startYear,nation:body.nation},catalog);
+    const game = newGame({year:state.startYear,nation:body.nation,difficulty:state.difficulty},catalog);
     if (!gameWorld(state,catalog).nations.includes(game.nation)) throw fail(400,'Выберите державу стартового года.');
     if (state.players.some(p=>p.nation===game.nation)) throw fail(409,'Эта держава уже занята.');
     state.players.push({name,nation:game.nation,treasury:game.treasury,stability:game.stability,
@@ -53,7 +55,7 @@ export function roomService(db, catalog, accounts) {
   function available(owner,input,random=false){
     requireAccount(owner);
     const f=matchFilter(input);
-    return db.prepare(`SELECT r.id,r.invite,json_extract(state,'$.startYear') AS year,
+    return db.prepare(`SELECT r.id,r.invite,json_extract(state,'$.startYear') AS year,json_extract(state,'$.title') AS title,
         json_extract(state,'$.billing') AS billing,json_extract(state,'$.capacity') AS capacity,
         json_array_length(state,'$.players') AS players,json_extract(state,'$.players[0].name') AS host
       FROM rooms r WHERE json_extract(state,'$.visibility')='public' AND json_extract(state,'$.phase')='lobby'
@@ -91,7 +93,7 @@ export function roomService(db, catalog, accounts) {
       return db.prepare(`SELECT r.id,r.state,p.seat FROM rooms r JOIN room_players p ON p.room=r.id
         WHERE p.owner=? ORDER BY r.rowid DESC`).all(owner).map(row=>{
         const s=JSON.parse(row.state);
-        return {id:row.id,year:s.year,phase:s.phase,nation:s.players[row.seat].nation,count:s.players.length};
+        return {id:row.id,title:s.title,year:s.year,phase:s.phase,nation:s.players[row.seat].nation,count:s.players.length};
       });
     }
     if (!id && method === 'POST') return transaction(()=>{
@@ -110,7 +112,9 @@ export function roomService(db, catalog, accounts) {
       const aiLimit=billing==='host'?body.aiLimit:0;
       const providerVersion=billing==='host'?accounts.version(owner):null;
       if(billing==='host' && (!providerVersion||!Number.isInteger(aiLimit)||aiLimit<1||aiLimit>1000))throw fail(400,'Сохраните провайдера в аккаунте и задайте лимит от 1 до 1000 запросов.');
-      const state = {requiresAccount:true,visibility,billing,capacity:Math.min(capacity,gameWorld(game,catalog).nations.length),aiLimit,providerVersion,year:game.year,startYear:game.year,mapYear:game.mapYear,mapSource:game.mapSource,
+      const interval=body.interval??'year';
+      if(!Object.hasOwn(intervals,interval))throw fail(400,'Выберите длительность раунда.');
+      const state = {title:game.title,briefing:game.briefing,difficulty:game.difficulty,objective:game.objective,interval,date:game.date,requiresAccount:true,visibility,billing,capacity:Math.min(capacity,gameWorld(game,catalog).nations.length),aiLimit,providerVersion,year:game.year,startYear:game.year,mapYear:game.mapYear,mapSource:game.mapSource,
         phase:'lobby',round:0,active:0,players:[],history:[]};
       addPlayer(state, body);
       const invite=randomBytes(9).toString('hex');
@@ -131,6 +135,12 @@ export function roomService(db, catalog, accounts) {
     if (seat===undefined) throw fail(404,'Комната не найдена.');
     const row=byId(id);
     if (method==='GET' && !operation) return String(row.revision)===since ? {revision:row.revision} : view(row,seat);
+    if(operation==='chat' && ['GET','POST'].includes(method)){
+      const state=JSON.parse(row.state),sender=state.players[seat].nation,partner=params.get('partner');
+      if(sender===partner||!state.players.some(p=>p.nation===partner))throw fail(400,'Выберите другого участника комнаты.');
+      if(method==='POST')messages.append('room',id,sender,partner,messageText(body.text));
+      return messages.list('room',id,sender,partner);
+    }
     if (method!=='POST') throw fail(405,'Метод не поддерживается.');
     if (row.revision!==body.revision) throw fail(409,'Комната уже обновлена. Проверьте очередь хода.');
     const state=JSON.parse(row.state);
@@ -143,7 +153,7 @@ export function roomService(db, catalog, accounts) {
     if (operation!=='turns') throw fail(404,'Маршрут не найден.');
     if (state.phase!=='playing' || state.active!==seat) throw fail(409,'Сейчас ход другого игрока.');
     const player=state.players[seat];
-    const position={...player,year:state.year,mapYear:state.mapYear,mapSource:state.mapSource,turn:state.round,history:[]};
+    const position={...player,id:row.id,objective:state.objective,date:state.date,year:state.year,mapYear:state.mapYear,mapSource:state.mapSource,turn:state.round,history:[]};
     let ai=null;
     if(state.billing==='host'){
       const call=db.prepare('SELECT created FROM room_ai WHERE room=? AND revision=?').get(id,row.revision);
@@ -169,12 +179,18 @@ export function roomService(db, catalog, accounts) {
     return finish(ai);
     function finish(ai){
       const order=ai || body;
-      const occupied=state.players.some(p=>p.members.includes(order.target));
-      if (['unite','diplomacy'].includes(order.action) && occupied) throw fail(409,'Эта территория уже входит в союз.');
-      if (order.action==='unite' && state.players.some(p=>p.nation===order.target)) throw fail(400,'Державы игроков сохраняют независимость.');
-      const next=playTurn(position,{action:order.action,target:order.target,expectedTurn:state.round},catalog);
-      for (const field of ['treasury','influence','stability','relations','members']) player[field]=next[field];
-      if (order.action==='diplomacy') {
+      const orders=order.action==='plan'?order.orders:[order];
+      if(!Array.isArray(orders)||orders.length>6||orders.some(item=>!item||typeof item!=='object'))throw fail(400,'Некорректный план хода.');
+      for(const order of orders){
+        const occupied=state.players.some(p=>p.members.includes(order.target));
+        if (['unite','diplomacy'].includes(order.action) && occupied) throw fail(409,'Эта территория уже входит в союз.');
+        if (order.action==='unite' && state.players.some(p=>p.nation===order.target)) throw fail(400,'Державы игроков сохраняют независимость.');
+      }
+      const excluded=state.players.flatMap(p=>[p.nation,...p.members]);
+      const clean=orders.map(({action,target,text})=>({action,target,text}));
+      const next=playTurn(position,{action:order.action,target:order.target,text:body.text,orders:clean,interval:state.interval,expectedTurn:state.round},catalog,excluded);
+      for (const field of ['treasury','influence','stability','relations','members','roads','academies','invitation','achieved']) player[field]=next[field];
+      for(const order of orders)if (order.action==='diplomacy') {
         const partner=state.players.find(p=>p.nation===order.target);
         if (partner) {
           const value=next.relations.find(r=>r.nation===partner.nation).value;
@@ -183,9 +199,9 @@ export function roomService(db, catalog, accounts) {
       }
       const event=next.history[0];
       if (ai) event.text=ai.narrative+' '+event.text;
-      state.history.push({...event,nation:player.nation});
+      state.history.push(...next.history.map(e=>({...e,nation:player.nation})));
       state.active=(seat+1)%state.players.length;
-      if (state.active===0) {state.year=next.year;state.round++;}
+      if (state.active===0) {state.year=next.year;state.date=next.date;state.round++;}
       return update(row,state,seat,state.billing==='host' && Boolean(ai));
     }
   };
